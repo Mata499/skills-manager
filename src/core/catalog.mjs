@@ -21,7 +21,7 @@ export function parseSkill(text, fallbackName) {
     content = content.slice(match[0].length);
   }
   const name = metadata.name ?? fallbackName;
-  if (typeof name !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name) || name.length > 128) throw new Error('Invalid skill name');
+  if (typeof name !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) || name.length > 128) throw new Error('Invalid skill name');
   if (metadata.description !== undefined && typeof metadata.description !== 'string') throw new Error('Skill description must be a string');
   if (metadata['disable-model-invocation'] !== undefined && typeof metadata['disable-model-invocation'] !== 'boolean') throw new Error('disable-model-invocation must be boolean');
   if (metadata['user-invocable'] !== undefined && typeof metadata['user-invocable'] !== 'boolean') throw new Error('user-invocable must be boolean');

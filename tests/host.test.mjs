@@ -4,7 +4,7 @@ import { createSkillProvider,guardSkill } from '../src/host.mjs';
 test('provider uses per-call cwd; get rechecks visibility after toggle',async()=>{
   let enabled=true; const seen=[];
   const entry={id:'one',name:'sample',description:'Test',path:'/library/sample',source:'library',rank:450,invocation:{modelInvocable:true,userInvocable:true}};
-  const manager={visible:async cwd=>{seen.push(cwd);return enabled?[entry]:[];},catalog:{load:async()=>({...entry,content:'body',resourceBase:{kind:'directory',path:entry.path}})}};
+  const manager={candidates:async cwd=>{seen.push(cwd);return [{...entry,enabled}];},visible:async cwd=>{seen.push(cwd);return enabled?[entry]:[];},catalog:{load:async()=>({...entry,content:'body',resourceBase:{kind:'directory',path:entry.path}})}};
   const provider=createSkillProvider(manager,{},()=>'/fallback');
   const [candidate]=await provider.list({cwd:'/project-a'});
   assert.equal(candidate.invocation.modelInvocable,true);

@@ -1,6 +1,6 @@
 {
   "name": "dsh-project-skills-manager",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "Project-scoped skill visibility for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",
@@ -13,6 +13,7 @@
     "cordis.patch.yml",
     "docs/implementation.md",
     "docs/dsh-integration-research.md",
+    "docs/overlay-verification.md",
     "GLOSSARY.md",
     "README.md"
   ],
@@ -22,7 +23,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "npm test && npm run build"
+    "check": "npm test && npm run build",
+    "test:registry": "node tests/fixtures/dsh/verify.mjs"
   },
   "dependencies": {
     "yaml": "^2.8.1"
@@ -38,7 +40,9 @@
     },
     "client": {
       "platform": "web",
-      "external": ["react"],
+      "external": [
+        "react"
+      ],
       "inject": [
         "@deepseek-ai/dsh-client-ui-slots"
       ]

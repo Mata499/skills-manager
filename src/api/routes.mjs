@@ -18,7 +18,7 @@ function sameOrigin(req) {
   if (!origin) return req.headers['sec-fetch-site'] !== 'cross-site';
   try { const u=new URL(origin); return ['http:','https:'].includes(u.protocol) && u.host===req.headers.host; } catch { return false; }
 }
-export function createRoutes(manager, { defaultProject=()=>process.cwd() }={}) {
+export function createRoutes(manager, { defaultProject=()=>process.cwd(), sessionWorkspace }={}) {
   function route(endpoint, method, run) {
     return {kind:'exact',path:PREFIX+endpoint,handler:async(req,res)=>{
       if (!sameOrigin(req)) return json(res,403,{error:'拒绝跨域访问'});
@@ -30,7 +30,14 @@ export function createRoutes(manager, { defaultProject=()=>process.cwd() }={}) {
     }};
   }
   return [
-    route('/state','GET',async(req,url)=>manager.snapshot(url.searchParams.get('project') || await defaultProject(req))),
+    route('/state','GET',async(req,url)=>{
+      const sessionId = url.searchParams.get('sessionId');
+      if (sessionId === null) return manager.snapshot(url.searchParams.get('project') || await defaultProject(req));
+      if (!sessionId) throw new Error('未能识别当前会话');
+      const workspace = await sessionWorkspace?.(sessionId);
+      if (!workspace) throw new Error('未找到当前会话所属的工作区');
+      return { ...await manager.snapshot(workspace.path), sessionWorkspace: workspace };
+    }),
     route('/skill','GET',async(req,url)=>manager.detail(url.searchParams.get('id'),url.searchParams.get('project') || await defaultProject(req))),
     route('/action','POST',async(req)=>manager.action(await body(req))),
   ];

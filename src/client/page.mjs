@@ -5,28 +5,25 @@ export function filterSkills(skills, { search = '', source = '', status = '' } =
   return skills.filter(skill => (!source || skill.source === source) && (!status || Boolean(skill.enabled) === (status === 'on')) && (!query || [skill.name, skill.description, skill.root, skill.source].join(' ').toLocaleLowerCase().includes(query)));
 }
 
-export function mountSettings(container, { fetch: request = globalThis.fetch } = {}) {
+export function mountSettings(container, { fetch: request = globalThis.fetch, sessionId } = {}) {
   const doc = container.ownerDocument;
+  const sessionBound = sessionId !== undefined;
   let disposed = false, generation = 0, detailGeneration = 0, project = '', state, busy = false;
   const abort = new AbortController();
   const el = (tag, text, className) => { const node = doc.createElement(tag); if (text != null) node.textContent = String(text); if (className) node.className = className; return node; };
   const root = el('section', null, 'skm-page');
-  root.setAttribute('aria-label', '项目技能');
+  root.setAttribute('aria-label', '技能');
   const style = el('style', styles); root.append(style);
   const heading = el('header', null, 'skm-header');
-  heading.append(el('h2', '项目技能'), el('p', '按项目控制全局技能。关闭的技能不应出现在该项目的技能目录中。'));
+  heading.append(el('h2', '技能'));
   const refresh = el('button', '刷新技能'); refresh.type = 'button';
   heading.append(refresh); root.append(heading);
   const notices = el('div'); notices.setAttribute('aria-live', 'polite'); root.append(notices);
   const controls = el('div', null, 'skm-controls');
   const labeled = (label, input) => { const wrap = el('label', label); wrap.append(input); controls.append(wrap); return input; };
   const select = (name, options) => { const node = el('select'); node.setAttribute('aria-label', name); for (const [value, label] of options) { const opt = el('option', label); opt.value = value; node.append(opt); } return node; };
-  const projectSelect = labeled('项目', select('项目', []));
-  const projectInput = el('input'); projectInput.type = 'text'; projectInput.placeholder = '输入项目绝对路径'; projectInput.setAttribute('aria-label', '项目绝对路径');
-  labeled('其他项目', projectInput);
-  const openProject = el('button', '加载项目'); openProject.type = 'button'; controls.append(openProject);
-  const defaults = labeled('全局技能默认策略', select('全局技能默认策略', [['off', '默认关闭'], ['on', '默认开启']]));
-  root.append(controls, el('p', '默认策略仅影响未显式设置的技能；切换不会清除项目开关。', 'skm-muted'));
+  const projectSelect = labeled('工作区', select('工作区', []));
+  root.append(controls);
   const stats = el('div', null, 'skm-stats'); stats.setAttribute('aria-live', 'polite'); root.append(stats);
   const filters = el('div', null, 'skm-filters');
   const search = el('input'); search.type = 'search'; search.placeholder = '搜索技能名称、描述或路径'; search.setAttribute('aria-label', '搜索技能');
@@ -55,14 +52,17 @@ export function mountSettings(container, { fetch: request = globalThis.fetch } =
   function message(text, error = false) { const node = el('p', text, error ? 'skm-error' : 'skm-notice'); node.setAttribute('role', error ? 'alert' : 'status'); notices.append(node); }
   function lock(value) {
     busy = value; root.setAttribute('aria-busy', String(value));
-    for (const node of root.querySelectorAll('button, select, input[type=checkbox]')) if (node !== close) node.disabled = value || (node === projectSelect && !state?.projects?.length && !project) || (node.type === 'checkbox' && !project);
+    const hasChoices = Boolean(state?.workspaces?.length || state?.projects?.length || project);
+    for (const node of root.querySelectorAll('button, select, input[type=checkbox]')) if (node !== close) node.disabled = value || (node === projectSelect && (sessionBound || !hasChoices)) || (node.type === 'checkbox' && !project);
   }
   function render() {
     list.replaceChildren(); if (!state) return;
     const skills = state.skills;
     const enabled = skills.filter(skill => skill.enabled);
     const tokens = enabled.reduce((total, skill) => total + (Number.isFinite(skill.tokens) ? skill.tokens : 0), 0);
-    stats.textContent = skills.length + ' 个技能 · ' + enabled.length + ' 已启用 · ' + (skills.length - enabled.length) + ' 已停用 · 策略启用技能正文估算 ≈' + tokens + ' tokens（非系统目录实际 token）';
+    const cells = [skills.length + ' 个技能', enabled.length + ' 个已启用', (skills.length - enabled.length) + ' 个已停用', (state.warnings?.length ?? 0) + ' 个诊断提示'];
+    stats.replaceChildren(...cells.map(text => el('span', text)));
+    stats.title = '正文估算 ≈' + tokens + ' tokens（字符数/4，不是系统目录实际消耗）';
     const filtered = filterSkills(skills, { search: search.value, source: source.value, status: status.value });
     if (!filtered.length) { list.append(el('p', skills.length ? '没有匹配的技能，请调整搜索或筛选条件。' : '未发现可管理的全局技能。内置技能不在此管理。', 'skm-empty')); return; }
     const groups = new Map();
@@ -82,32 +82,39 @@ export function mountSettings(container, { fetch: request = globalThis.fetch } =
     }
   }
   async function load() {
-    const current = ++generation; lock(true); notices.replaceChildren(); message('正在加载项目技能…');
+    const current = ++generation; lock(true); notices.replaceChildren(); message('正在加载技能…');
     try {
-      const next = await api('state' + (project ? '?project=' + encodeURIComponent(project) : ''));
+      if (sessionBound && !sessionId) throw new Error('未能识别当前会话');
+      const query = sessionBound ? '?sessionId=' + encodeURIComponent(sessionId) : project ? '?project=' + encodeURIComponent(project) : '';
+      const next = await api('state' + query);
       if (disposed || current !== generation) return;
       if (!Array.isArray(next.skills) || !Array.isArray(next.projects)) throw new Error('技能状态格式无效');
+      if (sessionBound && (!next.sessionWorkspace?.path || !next.project)) throw new Error('未找到当前会话所属的工作区');
       state = next; project = typeof next.project === 'string' ? next.project : '';
+      const workspaces = sessionBound ? [next.sessionWorkspace] : (Array.isArray(next.workspaces) && next.workspaces.length ? next.workspaces : next.projects.map(path => ({ path, title: '' })))
+        .filter(row => row && typeof row.path === 'string' && row.path);
+      if (!sessionBound && project && !workspaces.some(row => row.path === project)) workspaces.unshift({ path: project, title: '' });
       projectSelect.replaceChildren();
-      for (const path of [...new Set([project, ...next.projects].filter(Boolean))]) { const option = el('option', path); option.value = path; projectSelect.append(option); }
-      if (!project) { const option = el('option', '暂无项目'); option.value = ''; projectSelect.prepend(option); }
-      projectSelect.value = project; projectInput.value = project; defaults.value = next.defaults?.globalSkills === 'on' ? 'on' : 'off';
+      for (const row of workspaces) { const option = el('option', row.title || row.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '工作区'); option.value = row.path; projectSelect.append(option); }
+      if (!project) { const option = el('option', workspaces.length ? '请选择工作区' : '暂无工作区'); option.value = ''; projectSelect.prepend(option); }
+      projectSelect.value = sessionBound ? next.sessionWorkspace.path : project;
+      if (sessionBound) projectSelect.title = next.sessionWorkspace.path;
       const chosenSource = source.value; source.replaceChildren();
       for (const value of ['', ...new Set(next.skills.map(skill => skill.source))]) { const option = el('option', value || '全部来源'); option.value = value; source.append(option); }
       source.value = [...source.options].some(option => option.value === chosenSource) ? chosenSource : '';
       notices.replaceChildren();
-      message(next.enforcement?.verified === true ? '策略已接入；执行模式：' + next.enforcement.mode : '尚未验证技能目录过滤生效；开关保存成功不代表当前会话已经隐藏技能。');
+      message(next.enforcement?.message || (next.enforcement?.verified ? '受管技能目录覆盖已通过核验。' : '目录覆盖尚未核验，请刷新重试。'));
       for (const warning of next.warnings || []) message(warning);
-      if (!project) message('请选择一个有效项目后再设置项目开关。');
+      if (!project) message(workspaces.length ? '请选择一个工作区后再设置技能开关。' : '没有发现工作区，请先在 DSH 中添加工作区后刷新。');
       render();
-    } catch (error) { if (disposed || current !== generation) return; state = undefined; list.replaceChildren(); stats.textContent = ''; notices.replaceChildren(); message('加载失败：' + error.message + '。请点击刷新技能重试。', true); }
+    } catch (error) { if (disposed || current !== generation) return; state = undefined; if (sessionBound) { project = ''; projectSelect.replaceChildren(); projectSelect.title = ''; } list.replaceChildren(); stats.replaceChildren(); notices.replaceChildren(); message('加载失败：' + error.message + '。请点击刷新技能重试。', true); }
     finally { if (!disposed && current === generation) { lock(false); render(); } }
   }
   async function action(payload) {
     if (busy || disposed) return;
     lock(true); render(); notices.replaceChildren(); message('正在保存…');
     try { await api('action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (!disposed) await load(); }
-    catch (error) { if (!disposed) { notices.replaceChildren(); message('操作失败：' + error.message, true); defaults.value = state?.defaults?.globalSkills === 'on' ? 'on' : 'off'; } }
+    catch (error) { if (!disposed) { notices.replaceChildren(); message('操作失败：' + error.message, true); } }
     finally { if (!disposed) { lock(false); render(); } }
   }
   async function showDetail(skill) {
@@ -116,18 +123,7 @@ export function mountSettings(container, { fetch: request = globalThis.fetch } =
     try { const detail = await api('skill?id=' + encodeURIComponent(skill.id) + '&project=' + encodeURIComponent(project)); if (disposed || current !== detailGeneration) return; detailHeading.textContent = detail.name; detailPath.textContent = detail.path; detailText.textContent = detail.content; }
     catch (error) { if (!disposed && current === detailGeneration) detailText.textContent = '详情加载失败：' + error.message; }
   }
-  function chooseProject() {
-    if (busy || disposed) return;
-    const path = projectInput.value.trim();
-    if (!path || !(path.startsWith('/') || /^[a-z]:[\\/]/i.test(path) || path.startsWith('\\\\'))) {
-      notices.replaceChildren(); message('请输入项目绝对路径（例如 E:/项目 或 /home/user/project）。', true); return;
-    }
-    project = path; closeDetail(); load();
-  }
-  openProject.addEventListener('click', chooseProject);
-  projectInput.addEventListener('keydown', event => { if (event.key === 'Enter') chooseProject(); });
-  projectSelect.addEventListener('change', () => { project = projectSelect.value; closeDetail(); load(); });
-  defaults.addEventListener('change', () => action({ type: 'default', value: defaults.value }));
+  if (!sessionBound) projectSelect.addEventListener('change', () => { project = projectSelect.value; closeDetail(); load(); });
   refresh.addEventListener('click', () => { if (!state) load(); else action({ type: 'refresh' }); });
   for (const input of [search, source, status]) input.addEventListener(input === search ? 'input' : 'change', render);
   const ready = load();

@@ -1,12 +1,17 @@
-const PROVIDER = 'project-skills-manager';
+export const PROVIDER = 'project-skills-manager';
+// Lower than normal filesystem ranks (100..600); winning scope is checked at runtime.
+export const OVERLAY_RANK = -1_000_000_000;
 export function createSkillProvider(manager, control, cwd) {
   return {
     name:PROVIDER,
     async list(options={}) {
       options.signal?.throwIfAborted();
-      const entries=await manager.visible(options.cwd || await cwd());
+      const entries=await manager.candidates(options.cwd || await cwd());
+      options.signal?.throwIfAborted();
+      control.signal?.throwIfAborted();
       return entries.map(entry=>({name:entry.name,description:entry.description || entry.name,whenToUse:entry.whenToUse,
-        invocation:entry.invocation,provider:PROVIDER,source:entry.source,rank:entry.rank,
+        invocation:entry.enabled ? entry.invocation : {modelInvocable:false,userInvocable:false},
+        provider:PROVIDER,source:entry.source,rank:OVERLAY_RANK,
         locator:{id:entry.id},resourceBase:{kind:'directory',path:entry.path}}));
     },
     async get(candidate,options={}) {
@@ -17,6 +22,8 @@ export function createSkillProvider(manager, control, cwd) {
       const entry=entries.find(s=>s.id===candidate.locator?.id && s.name===candidate.name);
       if (!entry) return undefined;
       const loaded=await manager.catalog.load(entry.id);
+      options.signal?.throwIfAborted();
+      control.signal?.throwIfAborted();
       return {name:loaded.name,description:loaded.description || loaded.name,source:entry.source,provider:PROVIDER,whenToUse:loaded.whenToUse,invocation:loaded.invocation,
         content:loaded.content,resourceBase:loaded.resourceBase};
     },

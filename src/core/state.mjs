@@ -45,8 +45,13 @@ export function createStateStore(filePath, { lockTimeoutMs = 5000, retryMs = 20 
     for (;;) {
       try { await mkdir(lock); break; }
       catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        if (Date.now() >= deadline) { const failure = new Error('State lock timeout'); failure.code = 'STATE_LOCK_TIMEOUT'; throw failure; }
+        // Windows may report EPERM while the previous owner's directory deletion completes.
+        const pendingRemoval = process.platform === 'win32' && error.code === 'EPERM';
+        if (error.code !== 'EEXIST' && !pendingRemoval) throw error;
+        if (Date.now() >= deadline) {
+          if (pendingRemoval) throw error;
+          const failure = new Error('State lock timeout'); failure.code = 'STATE_LOCK_TIMEOUT'; throw failure;
+        }
         await delay(retryMs);
       }
     }

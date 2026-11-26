@@ -1,6 +1,16 @@
 # Skills-Manager —— 项目级技能开关插件
 
-## 实现状态（0.1.0）
+## 实现状态（0.1.6）
+
+0.1.6 修复对话上方「技能」页签的工作区绑定：按会话 ID 查询 DSH 工作区，只显示该会话所属的工作区；找不到归属时不回退到默认工作区。「设置 → 技能」仍可手动切换。技能策略作用域不变。
+
+0.1.4 实现同名 invocation 覆盖过滤：停用项以低 rank 和双调用权限关闭覆盖其他常规来源，模型目录不再展示；get 重新核验并拒绝停用项正文加载。设置页读取真实会话合并目录核对覆盖赢家，按结果显示已核验、无会话待核验或冲突，替代两条固定重复警告。
+
+0.1.3 按来源设置默认状态：skills-library 仓库技能默认关闭，user-dsh / user-agents / custom 全局技能默认开启；工作区显式开关优先。旧版统一默认值保留但不再覆盖来源规则。设置入口与标题改为“技能”，移除副标题、其他目录输入和统一默认策略控件，工作区下拉框仅显示名称，宽度约 200px。
+
+0.1.2 修复工作区发现：页面改为读取 DSH 宿主的工作区注册表（`ctx.workspaceRegistry`，即侧栏工作区列表），不再依赖代理会话的工作目录。界面字号与卡片样式对齐 DSH 设置页：26px 章节标题、15px 技能名、13px 描述、12px 辅助文字，统计条改分格显示。
+
+0.1.1 修复多活动项目时初始请求返回 HTTP 400、项目下拉框为空的问题：现在正常返回已发现项目，等待用户选择，不擅自选中其他会话项目。
 
 已建立可构建、可测试的首版。包名统一为 `dsh-project-skills-manager`；原生 Node ESM，支持 Node >=22。
 
@@ -13,7 +23,7 @@ npm pack
 
 - 已实现：项目策略、原子存储和跨进程锁、全局技能只读扫描、项目 provider、工具守卫、设置侧栏 UI、lazy-CJS 构建及自动化测试。
 - **未完成实机验收**：当前 DSH GUI 的导航挂载、多 provider 同名过滤、A/B 会话模型目录验收。没有安装插件到用户 profile 或修改用户配置。
-- **关键纠正**：新增 provider 不会删除其他 provider 条目。首版仅过滤自己提供的技能，其他来源可能仍广告同名技能。低 rank invocation overlay 是待验证的改进方向。
+- **目录语义**：中立注册表仍含停用项，但获胜的 invocation overlay 会使官方模型目录与用户技能入口过滤它。更低 rank / 更近 scope 冲突由运行时核验报告，不宣称可覆盖任意第三方插件。
 - token 显示为正文字符粗估，不代表模型目录实际消耗。发现、回收站和导入导出未实现。
 
 详见 [实现与安装说明](<docs/implementation.md>)、[官方接口研究](<docs/dsh-integration-research.md>)、[领域术语](<GLOSSARY.md>)。
@@ -113,6 +123,19 @@ ctx.on("tools/pre-execute", (exec, next) => {
 - 页面本体：`ctx.slots.inject('settings.section', ...)` —— 注册一个分区，出现在「设置」左侧导航
 - 导航图标：`ctx.slots.inject('settings.section.icon', ...)`，**id 必须与 settings.section 的 id 一致**，否则不渲染
 - 外壳（导航列表、移动端横条、标题栏）在 `ui-settings-general` 里，我们不用管
+
+### 2.4.1 会话页签：与「上下文」并排
+
+同一个页面还被挂到会话正文的页签条上：
+
+```js
+ctx.slots.inject('conversation.view', () =>
+  ctx.slots.register({ name: 'conversation.view', id, order: 31, label: () => '技能' }, WithPage({ embed: true })))
+```
+
+- `conversation.view` 是 keyed list，按 `order` 升序排列；`billion-context` 的「上下文」用的是 `order: 30`，所以 `order: 31` 正好落在它右边。
+- 页签内容和设置页复用同一个 `mountSettings()`（纯 DOM，无 React 运行时），只是 `embed: true` 时容器改成 `height:100% / overflow:auto`，适配页签内的滚动区域。
+- 两处注册共用 `id = 'project-skills-manager'`，卸载时由 `ctx.effect` 统一 dispose 所有挂载实例。
 
 浏览器半侧通过 `exports["./client"]` 提供，格式是客户端模块系统的 **lazy-CJS factory**：
 `factory(require)` 向页面模块加载器登记包名。仓库内用 `packages/client/tsdown.client.ts` 的

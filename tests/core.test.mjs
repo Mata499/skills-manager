@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, readdir } from 'node:fs/promises';
+import fs, { mkdtemp, mkdir, writeFile, readFile, rm, symlink, readdir } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { createStateStore, defaultState } from '../src/core/state.mjs';
@@ -37,6 +38,25 @@ test('concurrent stores serialize read-modify-write without lost updates', async
   const stores = Array.from({ length: 4 }, () => createStateStore(file));
   await Promise.all(Array.from({ length: 40 }, (_, i) => stores[i % 4].setSkill(dir, 'skill-' + i, true)));
   assert.equal((await stores[0].read()).projects[normalizeRoot(dir)].enabled.length, 40);
+});
+
+test('Windows lock creation retries pending deletion and preserves permanent permission errors', { skip: process.platform !== 'win32' }, async t => {
+  const dir = await fs.realpath(await temp(t)); const file = path.join(dir, 'state.json');
+  const originalMkdir = fs.mkdir;
+  const permission = Object.assign(new Error('Lock directory is pending deletion'), { code: 'EPERM' });
+  let attempts = 0, permanent = false;
+  t.mock.method(fs, 'mkdir', async (target, options) => {
+    if (target === file + '.lock' && (permanent || attempts++ === 0)) throw permission;
+    return originalMkdir(target, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const store = createStateStore(file, { lockTimeoutMs: 25, retryMs: 1 });
+  await store.setNote('after-retry', 'saved');
+  assert.ok(attempts >= 2);
+  permanent = true;
+  await assert.rejects(store.setNote('blocked', 'never written'), error => error === permission);
+  assert.deepEqual((await store.read()).skillNotes, { 'after-retry': 'saved' });
 });
 
 test('independent processes share the state lock', async t => {
@@ -77,6 +97,7 @@ test('YAML parser supports multiline strings and rejects unsafe/malformed metada
   assert.deepEqual(parseSkill('---\nname: hidden\nuser-invocable: false\n---\nbody', 'x').invocation, { modelInvocable: true, userInvocable: false }); assert.equal(parsed.whenToUse, 'manual'); assert.equal(parsed.content, '# Body');
   assert.throws(() => parseSkill('---\nname: a\nname: b\n---\nbody', 'x'));
   assert.throws(() => parseSkill('---\nname: ../bad\n---\nbody', 'x'));
+  for (const name of ['Bad','under_score','dot.name','two--hyphens']) assert.throws(()=>parseSkill('---\nname: '+name+'\n---\nbody','x'));
 });
 
 test('catalog deterministic collisions, source IDs, library/custom/global roots and safe load', async t => {
